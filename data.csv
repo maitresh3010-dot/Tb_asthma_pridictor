@@ -1,0 +1,7 @@
+age,cough,fever,weight_loss,wheezing,smoking,disease
+25,1,1,0,0,0,TB
+40,1,1,1,0,1,TB
+30,0,0,0,1,0,ASTHMA
+50,0,0,0,1,1,ASTHMA
+35,1,0,0,1,0,ASTHMA
+60,1,1,1,0,1,TB
