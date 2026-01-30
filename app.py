@@ -11,12 +11,11 @@ from streamlit_mic_recorder import mic_recorder
 
 # --- 1. DATABASE INITIALIZATION ---
 def init_db():
-    # Force creation and schema check
-    with sqlite3.connect('swaas_check.db', check_same_thread=False) as conn:
+    # Using isolation_level=None for autocommit, which helps with cloud sync
+    with sqlite3.connect('swaas_check.db', check_same_thread=False, isolation_level=None) as conn:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS patients 
                      (name TEXT, phone TEXT, result TEXT, confidence REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-        conn.commit()
 
 init_db()
 
@@ -111,16 +110,15 @@ if page == "🏠 Diagnostic App":
                         st.error("Audio processing failed.")
                         st.stop()
 
-                # --- SECURE DATA SAVE ---
+                # --- HARD-FLUSH DATA SAVE ---
                 try:
-                    with sqlite3.connect('swaas_check.db') as conn:
+                    with sqlite3.connect('swaas_check.db', isolation_level=None) as conn:
                         c = conn.cursor()
                         c.execute("INSERT INTO patients (name, phone, result, confidence) VALUES (?, ?, ?, ?)",
                                   (st.session_state.user_data['name'], st.session_state.user_data['phone'], pred, float(conf)))
-                        conn.commit()
-                    st.toast("✅ Record saved successfully")
+                    st.toast(f"✅ Data for {st.session_state.user_data['name']} Synced!")
                 except Exception as e:
-                    st.error(f"Save Error: {e}")
+                    st.error(f"Sync Error: {e}")
 
                 # --- DISPLAY RESULTS ---
                 st.markdown("<div class='result-card'>", unsafe_allow_html=True)
@@ -140,7 +138,7 @@ if page == "🏠 Diagnostic App":
 elif page == "📊 My Admin Dashboard":
     st.title("🛡️ Admin Results Portal")
     
-    if st.button("🔄 Refresh Data"):
+    if st.button("🔄 Refresh & Sync Data"):
         st.rerun()
 
     password = st.text_input("Enter Admin Password", type="password")
@@ -149,19 +147,27 @@ elif page == "📊 My Admin Dashboard":
     if password == correct_password:
         st.success("✅ Access Granted")
         try:
-            # Direct connection to verify visibility
             with sqlite3.connect('swaas_check.db') as query_conn:
                 df = pd.read_sql_query("SELECT * FROM patients ORDER BY timestamp DESC", query_conn)
             
             if not df.empty:
-                st.metric("Total Screenings", len(df))
+                st.metric("Total Successful Screenings", len(df))
                 st.dataframe(df, use_container_width=True)
                 
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Report (CSV)", csv, "swaas_results.csv", "text/csv")
+                # --- EXCEL EXPORT LOGIC ---
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Exhibition_Results')
+                
+                st.download_button(
+                    label="📊 Download as Excel Sheet",
+                    data=buffer.getvalue(),
+                    file_name="Swaas_Check_Exhibition_Report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             else:
-                st.info("The database is currently empty. Data will appear once a screening is completed.")
+                st.info("The database is currently empty. Run a test screening first!")
         except Exception as e:
-            st.error(f"Read Error: {e}")
+            st.error(f"Database Read Error: {e}")
     elif password != "":
         st.error("❌ Incorrect Password.")
