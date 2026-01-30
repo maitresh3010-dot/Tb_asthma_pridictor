@@ -1,0 +1,7 @@
+streamlit
+librosa
+scikit-learn
+pandas
+numpy
+streamlit-mic-recorder
+pydub
