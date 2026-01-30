@@ -11,15 +11,14 @@ from streamlit_mic_recorder import mic_recorder
 
 # --- 1. DATABASE INITIALIZATION ---
 def init_db():
-    # Use check_same_thread=False for Streamlit's multi-threaded environment
-    conn = sqlite3.connect('swaas_check.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS patients 
-                 (name TEXT, phone TEXT, result TEXT, confidence REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    return conn
+    # Force creation and schema check
+    with sqlite3.connect('swaas_check.db', check_same_thread=False) as conn:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS patients 
+                     (name TEXT, phone TEXT, result TEXT, confidence REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+        conn.commit()
 
-conn = init_db()
+init_db()
 
 # --- 2. CONFIG & STYLING ---
 st.set_page_config(page_title="Swaas-Check V2", page_icon="🫁", layout="centered")
@@ -112,11 +111,16 @@ if page == "🏠 Diagnostic App":
                         st.error("Audio processing failed.")
                         st.stop()
 
-                # --- SAVE TO DATABASE ---
-                c = conn.cursor()
-                c.execute("INSERT INTO patients (name, phone, result, confidence) VALUES (?, ?, ?, ?)",
-                          (st.session_state.user_data['name'], st.session_state.user_data['phone'], pred, float(conf)))
-                conn.commit()
+                # --- SECURE DATA SAVE ---
+                try:
+                    with sqlite3.connect('swaas_check.db') as conn:
+                        c = conn.cursor()
+                        c.execute("INSERT INTO patients (name, phone, result, confidence) VALUES (?, ?, ?, ?)",
+                                  (st.session_state.user_data['name'], st.session_state.user_data['phone'], pred, float(conf)))
+                        conn.commit()
+                    st.toast("✅ Record saved successfully")
+                except Exception as e:
+                    st.error(f"Save Error: {e}")
 
                 # --- DISPLAY RESULTS ---
                 st.markdown("<div class='result-card'>", unsafe_allow_html=True)
@@ -136,26 +140,28 @@ if page == "🏠 Diagnostic App":
 elif page == "📊 My Admin Dashboard":
     st.title("🛡️ Admin Results Portal")
     
+    if st.button("🔄 Refresh Data"):
+        st.rerun()
+
     password = st.text_input("Enter Admin Password", type="password")
     correct_password = st.secrets.get("ADMIN_PASSWORD", "amravati2026")
     
     if password == correct_password:
         st.success("✅ Access Granted")
         try:
-            # Re-connect to see the most recent data
-            query_conn = sqlite3.connect('swaas_check.db')
-            df = pd.read_sql_query("SELECT * FROM patients ORDER BY timestamp DESC", query_conn)
-            query_conn.close()
+            # Direct connection to verify visibility
+            with sqlite3.connect('swaas_check.db') as query_conn:
+                df = pd.read_sql_query("SELECT * FROM patients ORDER BY timestamp DESC", query_conn)
             
             if not df.empty:
-                st.metric("Total Exhibition Screenings", len(df))
+                st.metric("Total Screenings", len(df))
                 st.dataframe(df, use_container_width=True)
                 
                 csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Exhibition CSV", csv, "swaas_results.csv", "text/csv")
+                st.download_button("📥 Download Report (CSV)", csv, "swaas_results.csv", "text/csv")
             else:
-                st.info("The database is empty. Run a screening first!")
+                st.info("The database is currently empty. Data will appear once a screening is completed.")
         except Exception as e:
-            st.error(f"Database Error: {e}")
+            st.error(f"Read Error: {e}")
     elif password != "":
         st.error("❌ Incorrect Password.")
