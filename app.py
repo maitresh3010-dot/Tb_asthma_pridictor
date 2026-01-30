@@ -112,9 +112,49 @@ if page == "🏠 Diagnostic App":
                     st.session_state.step = 1
                     st.rerun()
 
-elif page == "📊 Admin Dashboard":
-    st.title("🛡️ Admin Portal")
-    pw = st.text_input("Password", type="password")
-    if pw == "amravati2026":
-        df = pd.read_sql_query("SELECT * FROM patients", conn)
-        st.dataframe(df)
+# --- PAGE 2: SECURE ADMIN DASHBOARD ---
+elif page == "📊 My Admin Dashboard":
+    st.title("🛡️ Admin Results Portal")
+    
+    # 🔐 Password Gate
+    # It will look for 'ADMIN_PASSWORD' in Streamlit Secrets. 
+    # If not found, it defaults to 'amravati2026' for your exhibition.
+    password = st.text_input("Enter Admin Password", type="password")
+    correct_password = st.secrets.get("ADMIN_PASSWORD", "amravati2026")
+    
+    if password == correct_password:
+        st.success("✅ Access Granted")
+        st.write("Reviewing all stored screening results from the local database.")
+
+        try:
+            # 1. Connect directly to the database file
+            conn = sqlite3.connect('swaas_check.db')
+            
+            # 2. Fetch all records using pandas
+            df = pd.read_sql_query("SELECT * FROM patients ORDER BY timestamp DESC", conn)
+            conn.close()
+            
+            if not df.empty:
+                # 3. Show a quick metric for the judges
+                st.metric("Total Exhibition Screenings", len(df))
+                
+                # 4. Display the table
+                st.dataframe(df, use_container_width=True)
+                
+                # 5. Add a download button for your project report
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Exhibition Report (CSV)",
+                    data=csv,
+                    file_name="swaas_exhibition_report.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.info("📡 The database is currently empty. Run a screening to see data here!")
+                
+        except Exception as e:
+            st.error(f"⚠️ Database Connection Error: {e}")
+            st.info("Tip: Make sure you have run at least one screening to create the database file.")
+    
+    elif password != "":
+        st.error("❌ Incorrect Password. Access Denied.")
