@@ -4,26 +4,33 @@ import io
 import database
 import utils
 import numpy as np
+import tempfile
+import os
 from streamlit_mic_recorder import mic_recorder
 
 # 1. Initialize Database
 database.init_db()
 
-# Page Configuration
+# 2. Page Configuration
 st.set_page_config(page_title="Swaas-Check V2", page_icon="🫁", layout="centered")
 
-# Navigation Sidebar
-page = st.sidebar.selectbox("Navigation", ["🏠 Diagnostic Center", "📊 My Admin Dashboard"])
+# 3. Session State Initialization (Crucial for Mobile Stability)
+if 'screening_result' not in st.session_state:
+    st.session_state.screening_result = None
 
-# Load AI Model
+# 4. Load AI Model
 @st.cache_resource
 def load_model():
     try:
         return pickle.load(open("audio_model.pkl", "rb"))
-    except: 
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
         return None
 
 model = load_model()
+
+# Navigation Sidebar
+page = st.sidebar.selectbox("Navigation", ["🏠 Diagnostic Center", "📊 My Admin Dashboard"])
 
 # --- PAGE 1: DIAGNOSTIC CENTER ---
 if page == "🏠 Diagnostic Center":
@@ -47,6 +54,7 @@ if page == "🏠 Diagnostic Center":
 
         with tab1:
             st.write("Record a clear 3-second sample:")
+            # Key 'recorder' keeps the mic widget state stable
             audio_record = mic_recorder(start_prompt="Start Recording", stop_prompt="Stop", key='recorder')
             if audio_record:
                 audio_source = io.BytesIO(audio_record['bytes'])
@@ -56,28 +64,49 @@ if page == "🏠 Diagnostic Center":
             if uploaded_file:
                 audio_source = uploaded_file
 
-        # Step 3: Analysis
+        # Step 3: Analysis with Temporary File for Mobile Support
         if audio_source and model:
             if st.button("🔍 Run AI Diagnostic"):
                 with st.spinner("Analyzing spectral signatures..."):
-                    features = utils.extract_45_features(audio_source)
-                    
-                    if features is not None:
-                        features = features.reshape(1, -1)
-                        prediction = model.predict(features)[0]
-                        confidence = np.max(model.predict_proba(features)[0]) * 100
+                    # Create a temp file so librosa can read it reliably on the server
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                        tmp.write(audio_source.getvalue())
+                        tmp_path = tmp.name
 
-                        # Save to Backend
-                        database.save_patient(p_name, p_age, p_phone, prediction, confidence)
+                    try:
+                        # Extract 45 features
+                        features = utils.extract_45_features(tmp_path)
+                        
+                        if features is not None:
+                            features = features.reshape(1, -1)
+                            prediction = model.predict(features)[0]
+                            confidence = np.max(model.predict_proba(features)[0]) * 100
 
-                        # Feedback
-                        st.divider()
-                        if prediction == "NORMAL":
-                            st.success(f"### Result: Healthy ({confidence:.1f}%)")
-                            st.balloons()
-                        else:
-                            st.error(f"### Result: TB Pattern Detected ({confidence:.1f}%)")
-                            st.snow()
+                            # Save to Database
+                            database.save_patient(p_name, p_age, p_phone, prediction, confidence)
+
+                            # Store in session state so results persist on screen
+                            st.session_state.screening_result = (prediction, confidence)
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+
+        # Step 4: Display Persisted Results
+        if st.session_state.screening_result:
+            res_pred, res_conf = st.session_state.screening_result
+            st.divider()
+            if res_pred == "NORMAL":
+                st.success(f"### Result: Healthy ({res_conf:.1f}%)")
+                st.balloons()
+            else:
+                st.error(f"### Result: TB Pattern Detected ({res_conf:.1f}%)")
+                st.snow()
+            
+            # Button to clear results for next person
+            if st.button("Reset for New Screening"):
+                st.session_state.screening_result = None
+                st.rerun()
+
     else:
         st.warning("⚠️ Please enter Name and Contact to unlock the diagnostic tools.")
 
@@ -85,28 +114,27 @@ if page == "🏠 Diagnostic Center":
 elif page == "📊 My Admin Dashboard":
     st.title("🛡️ Admin Results Portal")
     
-    # 🔐 Password Gate
-    password = st.text_input("Enter Admin Password", type="password")
+    # 🔐 Password Gate with .strip() to avoid hidden space errors
+    password_input = st.text_input("Enter Admin Password", type="password")
     
-    # Access check against Streamlit Secrets
-    if password == st.secrets.get("ADMIN_PASSWORD", "temp_pass"):
+    # Check against secrets
+    correct_password = st.secrets.get("ADMIN_PASSWORD", "temp_pass")
+
+    if password_input.strip() == correct_password.strip():
         st.success("Access Granted")
         st.write("Reviewing all stored screening results.")
 
-        # Fetch data from SQLite
         records = database.get_all_records()
-        
         if not records.empty:
             st.write(f"Total Database Entries: {len(records)}")
             st.dataframe(records, use_container_width=True)
             
-            # Export for Exhibition Report
             csv = records.to_csv(index=False).encode('utf-8')
             st.download_button("Download Full Report (CSV)", csv, "swaas_report.csv", "text/csv")
         else:
             st.info("No records found in the database yet.")
     
-    elif password == "":
+    elif password_input == "":
         st.info("Please enter the administrator password to view records.")
     else:
         st.error("❌ Incorrect Password. Access Denied.")
