@@ -5,3 +5,4 @@ pandas
 numpy
 streamlit-mic-recorder
 pydub
+openpyxl
