@@ -6,3 +6,4 @@ numpy
 streamlit-mic-recorder
 pydub
 openpyxl
+plotly
